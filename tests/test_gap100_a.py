@@ -256,7 +256,7 @@ def test_windows_uia_partial_failures(monkeypatch):
                         raising=False)
     st = perm.check_windows_uia()
     assert "GetForegroundWindow failed" in st.detail
-    assert "mic consent=" in st.detail  # real registry on Windows, unknown elsewhere
+    assert "mic consent" in st.detail  # "=Allow" on Windows, "unknown" elsewhere
 
 
 def test_windows_uia_registry_paths(monkeypatch):
