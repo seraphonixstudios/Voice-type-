@@ -1,0 +1,106 @@
+# VoiceType defaults — copied to ~/.config/voicetype/config.yaml on first run
+app_name: VoiceType
+sample_rate: 16000
+channels: 1
+dtype: float32
+chunk_ms: 80            # wake-word frame size (1280 samples @16kHz)
+ring_seconds: 30        # ring buffer capacity
+
+audio:
+  # null = system default input. If VoiceType reacts while YOUR mic is muted,
+  # it is listening on a different, unmuted device — run `voicetype --list-mics`
+  # and put the exact name or index here. Changing this needs a restart.
+  device: null
+
+wake_word:
+  # Built-in openWakeWord model names. "hey_jarvis" ships with openWakeWord;
+  # for "Hey VoiceType" train/export a custom model and point model_path at it.
+  # VoiceType falls back to the bundled model when the custom file is absent.
+  phrase: "Hey VoiceType"
+  model_name: "hey_jarvis"
+  model_path: ""        # e.g. ~/.config/voicetype/hey_voicetype.onnx
+  threshold: 0.5
+  refractory_seconds: 2.0
+  vad_threshold: 0.5
+  trigger_frames: 6     # energy fallback only: consecutive loud 80ms frames
+                        # before a wake fires (6 ~= 0.5s of sustained speech)
+
+stt:
+  model: "large-v3"
+  device: "auto"        # auto | cuda | cpu
+  compute_type: "auto"  # auto | float16 | int8 | int8_float16
+  beam_size: 5
+  vad_filter: true
+  vad_aggressiveness: 2  # 0 (lenient) .. 3 (aggressive), maps to VAD thresholds
+  vad_min_silence_ms: 500
+  silence_threshold: 0.015  # RMS below this counts as silence for utterance end
+  language: "en"
+  condition_on_previous_text: false
+  batch_size: 16
+  no_speech_threshold: 0.6
+  log_prob_threshold: -1.0
+
+utterance:
+  max_seconds: 30.0
+  end_silence_ms: 900
+  start_timeout_seconds: 6.0
+  pre_roll_ms: 400       # audio kept from ring buffer before wake instant
+  min_speech_fraction: 0.15  # utterances with less speech than this are
+                             # discarded before transcription (anti-phantom gate)
+
+llm:
+  enabled: true       # master switch for Dolphin Llama 3 command parsing
+  provider: "ollama"
+  host: "http://localhost:11434"
+  model: "dolphin-llama3:8b"
+  model_path: ""      # optional local gguf path (informational; Ollama pulls by name)
+  timeout_seconds: 30
+  temperature: 0.1
+  num_predict: 256
+  command_vocabulary: []  # extra command phrases that bias the heuristic fallback
+
+injection:
+  backend: "auto"       # auto | cg_event | sendinput | uinput | fallback
+  type_chunk_size: 32
+  type_delay_ms: 0      # typing speed: delay between chunks (0 = fastest)
+  typing_speed_cps: 0   # informational mirror of type_delay_ms (0 = max speed)
+  auto_punctuation: false
+  undo_behavior: "single"  # single | stacked (stacked = one undo clears whole utterance)
+  use_clipboard_for_unicode: true
+
+context:
+  backend: "auto"       # auto | mac_accessibility | uiautomation | atspi | fallback
+  poll_interval_seconds: 1.0
+
+companion:
+  enabled: false      # phone-as-mic over LAN (also: `voicetype --companion`)
+  host: "0.0.0.0"
+  port: 8765
+  tls: true           # self-signed cert, generated on first run
+  token_ttl_seconds: 600  # pairing token expiry (single use)
+
+integration:
+  clipboard_fallback: true  # primary -> clipboard paste -> warn
+  rich_text: true           # RTF in rich editors, plain fallback
+  ime_composition: true     # composition events for IME-aware apps
+
+hotkeys:
+  push_to_talk: "ctrl+alt+space"
+  toggle_listening: "ctrl+alt+v"
+  cancel_utterance: "esc"
+  emergency_stop: "ctrl+alt+x"
+
+vocabulary:
+  # Domain words boosted in the STT prompt + dictation post-processing
+  - "VoiceType"
+  - "GitHub"
+  - "macOS"
+  - "Wayland"
+
+ui:
+  show_last_transcription: true
+  start_minimized: true
+  accent_color: "#4da6ff"
+
+logging:
+  level: "INFO"

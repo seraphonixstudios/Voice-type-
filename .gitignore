@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+*.spec
+
+# Test + coverage artifacts
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+*.cover
+
+# Local run artifacts (never commit)
+voicetype-pairing-qr.png
+*.corrupt.yaml
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
