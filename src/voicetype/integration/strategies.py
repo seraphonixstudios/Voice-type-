@@ -63,8 +63,6 @@ def preserve_indentation(text: str, base_indent: str = "") -> str:
     others keep their offset from it — so pasted code never flattens.
     """
     lines = normalize_newlines(text or "").split("\n")
-    if not lines:
-        return ""
     nonempty = [ln for ln in lines if ln.strip()]
     if not nonempty:
         return ""

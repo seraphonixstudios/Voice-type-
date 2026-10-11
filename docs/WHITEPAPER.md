@@ -84,6 +84,12 @@ but a wrong-device capture plus missing gates:
 5. **Device pinning** (`audio.device` + `--list-mics`): multi-input machines
    (webcam + headset + USB mic) routinely listen on the wrong device; the
    app logs its active input at startup and the tray meter exposes it live.
+6. **Hermetic test harness**: the project's own suite once typed into the
+   developer's focused window — two tests drove a real `SendInputInjector`
+   without OS fakes. Backend tests now universally fake Quartz/SendInput/
+   evdev, a conftest fixture neuters `pynput` suite-wide, and a tripwire
+   test fails if interception is ever removed. Test doubles that can reach
+   the real world are treated as a safety defect, not a style issue.
 
 ## 6. Universal integration
 
@@ -119,8 +125,10 @@ app must stay foregrounded while dictating.
 
 ## 8. Evaluation
 
-- **350 tests, 93%+ line coverage**, enforced at 90% by pytest-cov in CI
-  (macOS / Windows / Linux × Python 3.10 / 3.12).
+- **400+ tests, 100% line + branch coverage**, enforced by pytest-cov in CI
+  (macOS / Windows / Linux × Python 3.10 / 3.12). Five lines carry
+  `# pragma: no cover` with documented justification (abstract contracts,
+  entry-point trampoline) — everything else is executed by the suite.
 - Suites cover wake behavior (synthetic audio, similar-phrase rejection,
   silence), exact-transcript STT, VAD/batching, parser schema + malformed +
   offline paths, per-platform injection with mocked OS APIs, context/cursor

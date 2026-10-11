@@ -20,6 +20,22 @@ def _tone(freq: float, seconds: float, amp: float = 0.25, seed: int = 0) -> np.n
     return wave.astype(np.float32)
 
 
+@pytest.fixture(autouse=True)
+def _block_live_os_input(monkeypatch):
+    """Safety net: tests must NEVER fire real OS keystrokes.
+
+    A past regression had a test driving a real SendInputInjector on
+    Windows, typing into whatever window had focus on the dev machine.
+    Backend unit tests install their own fakes (Quartz/windll/evdev); this
+    fixture additionally neuters `pynput` everywhere so FallbackInjector
+    stays log-only even where pynput happens to be installed.
+    """
+    import sys
+    monkeypatch.setitem(sys.modules, "pynput", None)
+    monkeypatch.setitem(sys.modules, "pynput.keyboard", None)
+    monkeypatch.setitem(sys.modules, "pynput.mouse", None)
+
+
 @pytest.fixture
 def sample_rate() -> int:
     return SR

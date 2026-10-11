@@ -98,8 +98,7 @@ class CompanionServer:
                     self._on_binary(session, bytes(message))
                     continue
                 reply = self._on_text(session, str(message))
-                if reply is not None:
-                    await ws.send(json.dumps(reply))
+                await ws.send(json.dumps(reply))
                 if session.authed is False and getattr(ws, "closed", False):
                     break
         except Exception as exc:

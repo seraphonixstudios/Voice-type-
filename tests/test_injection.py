@@ -290,8 +290,16 @@ def test_uinput_clipboard_none_available(monkeypatch, mock_platform_linux):
 
 
 # ---------- shared behavior on every backend ----------
+# NOTE: these run against REAL backend classes, so every OS API is faked
+# below. A past version of this test fired live SendInput keystrokes into
+# whatever window had focus on the dev machine. Never remove the fakes.
 @pytest.mark.parametrize("cls", [CGEventInjector, SendInputInjector, UInputInjector, FallbackInjector])
-def test_special_chars_newlines_undo(cls):
+def test_special_chars_newlines_undo(monkeypatch, cls):
+    _install_fake_quartz(monkeypatch)
+    _install_fake_appkit(monkeypatch)
+    _install_fake_windll(monkeypatch)
+    _install_fake_evdev(monkeypatch)
+    monkeypatch.setattr("shutil.which", lambda *a, **k: None)
     inj = cls()
     inj.type_text("caf\u00e9 \u4e2d\nline2\r\nline3")
     assert inj.typed_log == ["caf\u00e9 \u4e2d\nline2\r\nline3"]
@@ -351,6 +359,25 @@ def test_chunking_and_empty_text():
     assert [e[1] for e in inj.events_log if e[0] == "text"] == ["ab", "cd"]
     inj.type_text("")
     assert inj.typed_log == ["abcd"]
+
+
+def test_os_calls_intercepted_by_fakes(monkeypatch):
+    """Tripwire: backend typing must be intercepted by fakes, never the OS.
+
+    If anyone removes the fake installers below, this fails (no receipts)
+    instead of typing into the focused window of whoever runs the suite.
+    """
+    u32 = _install_fake_windll(monkeypatch)
+    fq = _install_fake_quartz(monkeypatch)
+    _install_fake_appkit(monkeypatch)
+    _install_fake_evdev(monkeypatch)
+    monkeypatch.setattr("shutil.which", lambda *a, **k: None)
+    SendInputInjector().type_text("hi")
+    CGEventInjector().type_text("hi")
+    UInputInjector().type_text("hi")
+    FallbackInjector().type_text("hi")
+    assert u32.batches  # fake SendInput received them, not Windows
+    assert fq.posts  # fake CGEvent received them, not macOS
 
 
 def test_get_injector_routing(monkeypatch):

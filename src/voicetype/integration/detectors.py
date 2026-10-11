@@ -21,8 +21,8 @@ KNOWN_ANTICHEAT = (
 
 def get_focused_role() -> dict:
     """Read the focused UI element's role via the OS accessibility layer."""
-    s = platform.system()
     try:
+        s = platform.system()
         if s == "Darwin":
             return _mac_role()
         if s == "Windows":

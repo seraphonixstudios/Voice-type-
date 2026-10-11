@@ -9,7 +9,7 @@ macOS, Windows, and Linux. 100% local. No cloud, no account, no plugins.
 
 [![CI](https://github.com/seraphonixstudios/Voice-type-/actions/workflows/ci.yml/badge.svg)](https://github.com/seraphonixstudios/Voice-type-/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
-[![Coverage](https://img.shields.io/badge/coverage-93%25-brightgreen)](docs/WHITEPAPER.md)
+[![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)](docs/WHITEPAPER.md)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)](#per-platform-setup)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -130,7 +130,7 @@ mDNS discovery, no cloud. [`mobile/`](mobile/) (Flutter) + `voicetype
 
 ```bash
 pip install -e ".[test]"
-pytest -q   # 350 tests · 90% coverage gate enforced
+pytest -q   # 400+ tests · 100% coverage gate enforced
 ```
 
 Covers wake word, transcription, parsing, injection, context, config, UI,

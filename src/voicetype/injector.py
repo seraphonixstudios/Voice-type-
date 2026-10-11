@@ -28,11 +28,11 @@ class BaseInjector(abc.ABC):
         self.last_error: str | None = None  # set when a backend call fails
 
     @abc.abstractmethod
-    def _type_ascii_chunk(self, chunk: str) -> None: ...
+    def _type_ascii_chunk(self, chunk: str) -> None: ...  # pragma: no cover - abstract contract; concrete backends are covered
     @abc.abstractmethod
-    def _press_combo(self, *keys: str) -> None: ...
+    def _press_combo(self, *keys: str) -> None: ...  # pragma: no cover - abstract contract; concrete backends are covered
     @abc.abstractmethod
-    def _scroll_backend(self, direction: str, amount: int) -> None: ...
+    def _scroll_backend(self, direction: str, amount: int) -> None: ...  # pragma: no cover - abstract contract; concrete backends are covered
 
     # ---- shared high-level API ----
     def _note_error(self, where: str, exc: Exception) -> None:

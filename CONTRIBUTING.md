@@ -14,6 +14,12 @@ voice keyboard, and contributions that protect that ethos are welcome.
    tests. No stubs, no TODO comments.
 4. **Never log secrets.** Secure-field text must only ever appear behind the
    redaction marker (see `BaseInjector.REDACTED`).
+5. **Tests must never fire real OS input.** Backend unit tests always install
+   the fakes (`_install_fake_quartz` / `_install_fake_windll` /
+   `_install_fake_evdev`); a conftest guard neuters `pynput` suite-wide.
+   Real `SendInput`/`CGEvent`/`uinput` calls in a test would type into the
+   focused window of whoever runs the suite — `test_os_calls_intercepted_by_fakes`
+   is the tripwire. This bit us once; never again.
 
 ## Workflow
 

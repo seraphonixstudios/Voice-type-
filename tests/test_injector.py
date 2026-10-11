@@ -35,7 +35,13 @@ def test_undo_redo_paragraph_scroll():
     assert ("scroll", "down", 3) in inj.events_log
 
 
-def test_get_injector_auto_returns_working_injector():
+def test_get_injector_auto_returns_working_injector(monkeypatch):
+    import ctypes
+    import types
+    # Hermetic: even the "auto" backend must not touch real OS input APIs.
+    monkeypatch.setattr(ctypes, "windll",
+                        types.SimpleNamespace(user32=types.SimpleNamespace(
+                            SendInput=lambda *a: 0)), raising=False)
     inj = get_injector("auto")
     inj.type_text("hello")
     assert inj.typed_log == ["hello"]

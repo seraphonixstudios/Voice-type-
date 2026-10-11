@@ -253,8 +253,6 @@ class VoicePipeline:
         loud, total = 0, 0
         for start in range(0, mono.size, frame):
             chunk = mono[start:start + frame]
-            if chunk.size == 0:
-                continue
             total += 1
             rms = float(np.sqrt(np.mean(chunk.astype(np.float64) ** 2) + 1e-12))
             if rms >= self.silence_threshold:
