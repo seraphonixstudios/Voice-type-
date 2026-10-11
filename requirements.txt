@@ -1,7 +1,9 @@
 sounddevice>=0.4.6
 numpy>=1.24
 faster-whisper>=1.0.0
-openwakeword>=0.5.1
+# Optional: real openWakeWord model. Omit on Python 3.12 Linux (tflite-runtime
+# has no cp312 wheels); the built-in energy fallback covers for it.
+# openwakeword>=0.5.1
 onnxruntime>=1.16
 PySide6>=6.6
 PyYAML>=6.0

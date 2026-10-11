@@ -60,6 +60,7 @@ setting persists to YAML and reloads **live, no restart**.
 ```bash
 pip install -r requirements.txt
 pip install -e .
+pip install -e ".[wake]"   # optional real openWakeWord model (skip on py3.12 Linux)
 ollama pull dolphin-llama3:8b && ollama serve   # local command parser
 voicetype --check     # print resolved config
 voicetype             # tray app  ·  voicetype --no-tray  # headless
