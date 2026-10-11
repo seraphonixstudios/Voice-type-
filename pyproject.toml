@@ -25,7 +25,8 @@ dependencies = [
 mac = ["pyobjc-framework-Quartz>=10", "pyobjc-framework-AppKit>=10"]
 windows = ["pywin32>=306", "uiautomation>=2.0"]
 linux = ["evdev>=1.6", "python-uinput>=1.0"]
-test = ["pytest>=7", "pytest-cov>=5", "pytest-asyncio>=0.23"]
+test = ["pytest>=7", "pytest-cov>=5", "pytest-asyncio>=0.23",
+        "cryptography>=41"]  # companion identity tests need real cert crypto
 # Real openWakeWord model. Optional: without it VoiceType uses the built-in
 # energy fallback (all tests cover both paths). Kept out of base deps because
 # its tflite-runtime dependency ships no Python 3.12 Linux wheels.

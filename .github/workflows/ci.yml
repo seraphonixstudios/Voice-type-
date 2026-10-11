@@ -39,13 +39,10 @@ jobs:
       - name: Run tests with coverage
         env:
           QT_QPA_PLATFORM: offscreen
-        run: |
-          # NOTE: no --cov-fail-under here. Absolute line/branch totals differ
-          # per OS (platform API surface); the 100% gate is enforced on the
-          # reference Windows run locally. CI reports coverage per job below.
-          pytest -q -o addopts="--cov=src/voicetype --cov-report=term-missing" \
-            --cov-report=xml:coverage-${{ matrix.os }}-py${{ matrix.python }}.xml \
-            --cov-report=html:htmlcov
+        # Single line + single quotes: PowerShell (windows-latest) chokes on
+        # backslash continuations and double-quoted -o values. Single quotes
+        # are safe in both pwsh and bash.
+        run: pytest -q -o 'addopts=--cov=src/voicetype --cov-report=term-missing' --cov-report=xml:coverage-${{ matrix.os }}-py${{ matrix.python }}.xml --cov-report=html:htmlcov
 
       - name: Upload coverage artifact
         if: always()
