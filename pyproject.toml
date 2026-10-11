@@ -57,7 +57,10 @@ source = ["src/voicetype"]
 branch = true
 
 [tool.coverage.report]
-fail_under = 100
+# NOTE: no fail_under here on purpose. Absolute totals legitimately differ
+# per OS (platform API surface), so CI jobs only REPORT coverage (see the
+# artifacts). The 100% gate lives in [tool.pytest.ini_options] addopts and
+# applies to local/reference runs: pytest enforces --cov-fail-under=100.
 show_missing = true
 exclude_lines = [
   "pragma: no cover",
