@@ -325,6 +325,74 @@ def test_spectral_fft_failure():
         np.fft.rfft = orig
 
 
+def test_live_preview_branches():
+    import numpy as np
+    from voicetype.config_manager import load_config
+    from voicetype.injector import FallbackInjector
+    from voicetype.pipeline import VoicePipeline
+    from tests.test_pipeline import FakeContext, FakeParser, FakeTranscriber
+
+    def make_pipe(text="partial words", preview=None):
+        cfg = load_config(overrides={"injection": {"backend": "fallback"},
+                                     "preview": preview or {}})
+        return VoicePipeline(cfg, injector=FallbackInjector(),
+                             transcriber=FakeTranscriber(text),
+                             parser=FakeParser({"kind": "dictation", "text": text}),
+                             context=FakeContext())
+
+    chunk = [np.ones(32000, dtype=np.float32) * 0.2]
+    pipe = make_pipe()
+    events: list = []
+    pipe.add_event_listener(lambda e, p: events.append((e, p.get("text", ""))))
+    pipe.preview_interval = 0.0
+    pipe._maybe_preview(chunk, 32000)
+    assert ("preview", "partial words") in events
+    assert pipe.injector.typed_log == []  # never injected
+    pipe.preview_interval = 1000.0
+    n = len(events)
+    pipe._maybe_preview(chunk, 32000)
+    assert len(events) == n  # throttled
+    pipe.preview_enabled = False
+    pipe._maybe_preview(chunk, 32000)
+    assert len(events) == n  # disabled
+    pipe2 = make_pipe(text="")
+    before = len(events)
+    pipe2.add_event_listener(lambda e, p: events.append((e, p.get("text", ""))))
+    pipe2.preview_interval = 0.0
+    pipe2._maybe_preview(chunk, 32000)
+    assert len(events) == before  # empty partial emits nothing
+    assert pipe._maybe_preview([], 0) is None  # too short, silent
+    pipe3 = make_pipe()
+
+    class BoomSTT(FakeTranscriber):
+        def transcribe(self, audio, sample_rate=16000):
+            raise RuntimeError("gpu busy")
+
+    pipe3.transcriber = BoomSTT("x")
+    pipe3.preview_interval = 0.0
+    assert pipe3._maybe_preview(chunk, 32000) is None  # swallowed
+    pipe.preview_interval = 0.0
+    pipe._maybe_preview([], 48000)  # no chunks yet: previews silence buffer
+    assert ("preview", "partial words") in events
+
+
+def test_ui_preview_display_only(tmp_path, qapp):
+    from voicetype.config_manager import ConfigManager
+    from voicetype.settings_store import SettingsStore
+    from voicetype.ui_main import MainWindow
+    from tests.test_pipeline import _silent_pipeline
+    pipe, _ = _silent_pipeline("hi", {"kind": "dictation", "text": "hi"})
+    store = SettingsStore(ConfigManager(user_path=tmp_path / "c.yaml"), pipe)
+    win = MainWindow(store, pipe)
+    rows = win.log_table.rowCount()
+    win._on_event("preview", {"text": "hel"})
+    assert win.last_label.text() == "hel …"
+    assert win.log_table.rowCount() == rows  # never logged
+    win._on_event("preview", {"text": "   "})
+    assert win.last_label.text() == "hel …"  # empty preview changes nothing
+    win.close()
+
+
 def test_risky_url_command_demoted():
     import numpy as np
     from voicetype.config_manager import load_config

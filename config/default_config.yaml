@@ -49,6 +49,13 @@ utterance:
   min_speech_fraction: 0.15  # utterances with less speech than this are
                              # discarded before transcription (anti-phantom gate)
 
+preview:
+  # Display-only running transcript while recording (never injected, never
+  # logged as final). Reuses the main model, so no extra VRAM.
+  enabled: true
+  interval_seconds: 2.5   # slowest rate of preview updates
+  min_seconds: 1.5        # minimum audio before the first preview
+
 llm:
   enabled: true       # master switch for Dolphin Llama 3 command parsing
   provider: "ollama"

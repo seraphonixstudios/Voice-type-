@@ -689,6 +689,12 @@ class MainWindow(QMainWindow):
             elif event == "listening":
                 on = bool(payload.get("on", True))
                 self.listen_toggle.setText("Pause listening" if on else "Resume listening")
+            elif event == "preview":
+                # Display-only running guess: never logged, never injected.
+                text = (payload.get("text") or "").strip()
+                if text:
+                    self.last_label.setText(text + " …")
+                    self.statusBar().showMessage(f"hearing: {text[:80]} …")
             elif event == "error":
                 text = payload.get("text") or "Something went wrong — see Logs."
                 self.last_label.setText(text)

@@ -198,6 +198,11 @@ class VoicePipeline:
         # is discarded before transcription, so Whisper never gets a chance
         # to hallucinate it into typed text.
         self.min_speech_fraction = float(utt.get("min_speech_fraction", 0.15))
+        pvcfg = config.get("preview", {})
+        self.preview_enabled = bool(pvcfg.get("enabled", True))
+        self.preview_interval = float(pvcfg.get("interval_seconds", 2.5))
+        self.preview_min_seconds = float(pvcfg.get("min_seconds", 1.5))
+        self._last_preview_at = 0.0
         self._lock = threading.Lock()
         self._recording = False
         self.listening = True
@@ -282,11 +287,36 @@ class VoicePipeline:
                     silent = 0
                 chunks.append(tail)
                 collected += tail.size
+            self._maybe_preview(chunks, collected)
             if collected > sr * 0.8 and silent >= silence_needed:
                 break
         if not chunks:
             return np.zeros(0, dtype=np.float32)
         return np.concatenate(chunks)
+
+    def _maybe_preview(self, chunks: list, collected: int) -> None:
+        """Emit a display-only partial transcript while recording.
+
+        Never injected, never logged as final: just the "it's hearing me"
+        feedback. Reuses the main transcriber (no extra VRAM); failures and
+        empty partials are silently skipped.
+        """
+        if not self.preview_enabled:
+            return
+        now = time.time()
+        if now - self._last_preview_at < self.preview_interval:
+            return
+        if collected < int(self.ring.sample_rate * self.preview_min_seconds):
+            return
+        self._last_preview_at = now
+        try:
+            audio = np.concatenate(chunks) if chunks else np.zeros(0, dtype=np.float32)
+            tx = self.transcriber.transcribe(audio)
+            text = (tx.get("text") or "").strip()
+            if text:
+                self._emit("preview", {"text": text})
+        except Exception:
+            pass
 
     @staticmethod
     def spectral_diagnosis(audio: np.ndarray, sample_rate: int = 16000) -> str:
