@@ -205,6 +205,17 @@ def test_sendinput_unicode_batches(monkeypatch, mock_platform_windows):
     inj.type_text("ab")
     assert inj.typed_log == ["ab"]
     assert u32.batches == [4]  # down+up per char
+    assert inj.last_delivery == (4, 4)  # OS accepted everything
+
+
+def test_sendinput_zero_acceptance_tracked(monkeypatch, mock_platform_windows):
+    import ctypes
+    import types
+    u32 = _install_fake_windll(monkeypatch)
+    u32.SendInput = lambda *a: 0  # OS took nothing (blocked target)
+    inj = SendInputInjector()
+    inj.type_text("ab")
+    assert inj.last_delivery == (0, 4)
 
 
 def test_sendinput_combo_and_scroll(monkeypatch, mock_platform_windows):

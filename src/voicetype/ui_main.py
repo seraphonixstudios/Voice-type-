@@ -63,6 +63,8 @@ def _group(title: str) -> tuple[QGroupBox, QFormLayout]:
 
 
 class MainWindow(QMainWindow):
+    dictate_done = Signal()
+
     def __init__(self, store, pipeline, parent=None):
         super().__init__(parent)
         self.store = store
@@ -70,6 +72,7 @@ class MainWindow(QMainWindow):
         self.bridge = PipelineBridge()
         self.bridge.event.connect(self._on_event)
         pipeline.add_event_listener(lambda e, p: self.bridge.event.emit(e, dict(p or {})))
+        self.dictate_done.connect(self._dictate_finished)
         self.history: list[dict] = []
         self._wake_flash_until = 0.0
 
@@ -138,6 +141,13 @@ class MainWindow(QMainWindow):
         self.wake_led = QLabel("● idle")
         self.wake_led.setStyleSheet("color: #8a93a3; font-size: 16px;")
         form.addRow("Wake word", self.wake_led)
+        self.dictate_btn = QPushButton("🎤 Dictate now (no wake word)")
+        self.dictate_btn.setToolTip(
+            "Record one utterance immediately, skipping wake-word detection.\n"
+            "Note: clicking here moves keyboard focus — for typing into another\n"
+            "app, use the global push-to-talk hotkey instead (default Ctrl+Alt+Space).")
+        self.dictate_btn.clicked.connect(self._dictate_now)
+        form.addRow("Manual", self.dictate_btn)
         page.layout.addWidget(box)
 
         box2, form2 = _group("Now")
@@ -181,6 +191,28 @@ class MainWindow(QMainWindow):
         self.pipeline.set_listening(on)
         self.listen_toggle.setText("Pause listening" if on else "Resume listening")
         self.statusBar().showMessage(f"Listening {'on' if on else 'paused'} — {_now()}")
+
+    def _dictate_now(self):
+        import threading
+        self.dictate_btn.setEnabled(False)
+        self.statusBar().showMessage(f"Recording… speak, then pause. ({_now()})")
+        threading.Thread(target=self._dictate_worker, name="vt-manual",
+                         daemon=True).start()
+
+    def _dictate_worker(self) -> None:
+        try:
+            self.pipeline.dictate_once()
+        except Exception as exc:
+            try:
+                self.pipeline._emit("error", {"text": f"Dictation failed: {exc}"})
+            except Exception:
+                pass
+        finally:
+            self.dictate_done.emit()
+
+    def _dictate_finished(self) -> None:
+        self.dictate_btn.setEnabled(True)
+        self.statusBar().showMessage(f"Done — {_now()}")
 
     # ================= Wake word =================
     def _build_wake(self):
@@ -647,12 +679,21 @@ class MainWindow(QMainWindow):
                 if event == "command":
                     p = payload.get("parsed", {})
                     text = f"{p.get('action', '')} {p.get('target', '')} {p.get('value', '')}".strip()
-                self.last_label.setText(text or "—")
-                self._add_log(kind, text or "")
-                self.statusBar().showMessage(f"{kind}: {(text or '')[:80]}")
+                    raw = (p.get("raw") or "").strip()
+                    if raw:
+                        text = f"{text} \u2190 {raw[:120]}"
+                shown = text or payload.get("detail", "")
+                self.last_label.setText(shown or "—")
+                self._add_log(kind, shown)
+                self.statusBar().showMessage(f"{kind}: {(shown or '')[:80]}")
             elif event == "listening":
                 on = bool(payload.get("on", True))
                 self.listen_toggle.setText("Pause listening" if on else "Resume listening")
+            elif event == "error":
+                text = payload.get("text") or "Something went wrong — see Logs."
+                self.last_label.setText(text)
+                self._add_log("error", text)
+                self.statusBar().showMessage(text[:120])
         except Exception:
             pass
 

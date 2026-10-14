@@ -30,20 +30,39 @@ def test_single_transient_does_not_fire():
     assert fired == []
 
 
-def test_quiet_gap_resets_streak():
+def test_sparse_noise_never_fires():
     det = WakeWordDetector(threshold=0.5, refractory_seconds=0.0, trigger_frames=3)
     det.start()
     det.listening = True
     fired = []
     det.add_callback(lambda info: fired.append(info))
     loud = np.ones(1280, dtype=np.float32) * 0.5
-    det.feed(loud)
-    det.feed(loud)  # streak 2 < 3
-    det.feed(np.zeros(1280, dtype=np.float32))  # quiet resets the streak
-    det.feed(loud)
-    det.feed(loud)  # streak 2 < 3 again
+    quiet = np.zeros(1280, dtype=np.float32)
+    # Isolated clacks with long quiet gaps: window never holds 3 loud frames.
+    for _ in range(3):
+        det.feed(loud)
+        det.feed(quiet)
+        det.feed(quiet)
+        det.feed(quiet)
     det.stop()
     assert fired == []
+
+
+def test_syllable_gaps_do_not_reset_window():
+    # Mirrors real speech: loud syllables separated by quiet gaps still fire.
+    det = WakeWordDetector(threshold=0.5, refractory_seconds=0.0, trigger_frames=6)
+    det.start()
+    det.listening = True
+    fired = []
+    det.add_callback(lambda info: fired.append(info))
+    loud = np.ones(1280, dtype=np.float32) * 0.5
+    quiet = np.zeros(1280, dtype=np.float32)
+    for _ in range(3):
+        det.feed(loud)
+        det.feed(loud)
+        det.feed(quiet)
+    det.stop()
+    assert len(fired) == 1
 
 
 def test_detector_ignores_silence():

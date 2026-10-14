@@ -91,7 +91,7 @@ def test_handle_audio_respects_pause_switch():
                                  {"kind": "dictation", "text": "Hello world"})
     pipe.set_listening(False)
     res = pipe.handle_audio(_loud_audio())
-    assert res == {"kind": "empty", "text": ""}
+    assert res["kind"] == "empty" and res["text"] == ""
     assert inj.typed_log == []
     pipe.set_listening(True)
     assert pipe.handle_audio(_loud_audio())["kind"] == "dictation"

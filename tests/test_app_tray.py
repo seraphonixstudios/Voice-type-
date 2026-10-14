@@ -155,3 +155,60 @@ def test_main_module_executes(capsys):
         sys.argv = argv
     assert exc.value.code == 0
     assert "sample_rate" in capsys.readouterr().out
+
+
+def test_create_app_survives_dll_setup_failure(tmp_path, monkeypatch):
+    from voicetype import _dll_setup as dllmod
+    from voicetype.app import create_app
+    monkeypatch.setattr(dllmod, "ensure_cuda_dlls",
+                        lambda: (_ for _ in ()).throw(RuntimeError("no cuda")))
+    pipe, config, store = create_app(user_config=str(tmp_path / "c.yaml"))
+    assert pipe is store.pipeline and config["sample_rate"] == 16000
+
+
+def test_push_to_talk_wiring_and_failure(tmp_path, monkeypatch, capsys):
+    import sys
+    import threading
+    import time
+    import types
+    from voicetype import app as appmod
+    from voicetype.config_manager import ConfigManager
+    from voicetype.settings_store import SettingsStore
+    from tests.test_pipeline import _silent_pipeline
+
+    pipe, _ = _silent_pipeline("hi", {"kind": "dictation", "text": "hi"})
+    mgr = ConfigManager(user_path=tmp_path / "c.yaml")
+    store = SettingsStore(mgr, pipe)
+    captured: dict = {}
+
+    class FakeListener:
+        def __init__(self, spec, callback):
+            captured["spec"] = spec
+            captured["callback"] = callback
+
+        def start(self):
+            captured["started"] = True
+            return True
+
+    monkeypatch.setitem(sys.modules, "voicetype.hotkeys",
+                        types.SimpleNamespace(HotkeyListener=FakeListener))
+    listener = appmod._start_push_to_talk(mgr.config, pipe)
+    assert captured["spec"] == "ctrl+alt+space" and captured["started"] is True
+    assert listener is not None
+    done: list = []
+    pipe.dictate_once = lambda: done.append(1) or {"kind": "empty", "text": ""}
+    captured["callback"]()
+    deadline = time.time() + 5.0
+    while not done and time.time() < deadline:
+        time.sleep(0.02)
+    assert done == [1]
+
+    # Hotkey subsystem missing entirely: main() reports and continues.
+    monkeypatch.setitem(sys.modules, "voicetype.hotkeys", None)
+    real_sleep = time.sleep
+    main_thread = threading.current_thread()
+    monkeypatch.setattr(time, "sleep", lambda s: (
+        (_ for _ in ()).throw(KeyboardInterrupt())
+        if threading.current_thread() is main_thread else real_sleep(0.001)))
+    assert appmod.main(["--config", str(tmp_path / "c.yaml"), "--no-tray"]) == 0
+    assert "hotkeys unavailable" in capsys.readouterr().out

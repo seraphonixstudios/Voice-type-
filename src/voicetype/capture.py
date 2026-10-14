@@ -41,6 +41,7 @@ class AudioCapture:
         self.stats = CaptureStats()
         self.backend = "sounddevice"
         self.device_name: str | None = None
+        self._capture_rate = int(sample_rate)  # actual device rate (resampled to sample_rate)
         self._lock = threading.Lock()
 
     @staticmethod
@@ -88,10 +89,34 @@ class AudioCapture:
             except Exception:
                 continue
 
+    def _query_native_rate(self) -> int | None:
+        try:
+            import sounddevice as sd  # type: ignore
+            info = sd.query_devices(self.device, "input")
+        except Exception:
+            return None
+        if not isinstance(info, dict):
+            return None
+        try:
+            rate = float(info.get("default_samplerate") or 0)
+        except (TypeError, ValueError):
+            return None
+        return int(rate) if rate > 0 else None
+
+    @staticmethod
+    def _resample(mono: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
+        if src_rate == dst_rate or mono.size < 2:
+            return mono
+        n = max(1, int(round(mono.size * dst_rate / src_rate)))
+        xp = np.linspace(0, 1, mono.size)
+        return np.interp(np.linspace(0, 1, n), xp, mono).astype(np.float32)
+
     def _callback(self, indata, frames, time_info, status) -> None:  # sounddevice signature
         mono = np.asarray(indata, dtype=np.float32).reshape(-1)
         if mono.size == 0:
             return
+        if getattr(self, "_capture_rate", self.sample_rate) != self.sample_rate:
+            mono = self._resample(mono, self._capture_rate, self.sample_rate)
         self.ring.write(mono)
         self.stats.callbacks += 1
         self.stats.last_callback_at = time.time()
@@ -117,16 +142,38 @@ class AudioCapture:
 
     def start(self) -> str:
         self._stop.clear()
+        self._capture_rate = self.sample_rate
         try:
             import sounddevice as sd  # type: ignore
-            self._stream = sd.InputStream(
-                samplerate=self.sample_rate,
-                channels=self.channels,
-                dtype="float32",
-                blocksize=self.chunk_samples,
-                device=self.device,
-                callback=self._callback,
-            )
+            try:
+                self._stream = sd.InputStream(
+                    samplerate=self.sample_rate,
+                    channels=self.channels,
+                    dtype="float32",
+                    blocksize=self.chunk_samples,
+                    device=self.device,
+                    callback=self._callback,
+                )
+            except Exception:
+                # Many USB mics (e.g. Samson Satellite over WASAPI) reject
+                # 16 kHz outright (PaError -9997). Reopen at the device's
+                # native rate and resample each chunk in the callback.
+                native = self._query_native_rate()
+                if not native or native == self.sample_rate:
+                    raise
+                native_block = max(64, int(round(
+                    self.chunk_samples * native / self.sample_rate)))
+                self._stream = sd.InputStream(
+                    samplerate=native,
+                    channels=self.channels,
+                    dtype="float32",
+                    blocksize=native_block,
+                    device=self.device,
+                    callback=self._callback,
+                )
+                self._capture_rate = native
+                log.info("device needs %d Hz; resampling to %d Hz",
+                         native, self.sample_rate)
             self._stream.start()
             self.backend = "sounddevice"
             self.resolve_device_name()

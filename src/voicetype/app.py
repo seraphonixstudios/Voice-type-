@@ -10,12 +10,42 @@ from voicetype.settings_store import SettingsStore
 
 
 def create_app(user_config=None, overrides=None):
+    try:
+        from voicetype._dll_setup import ensure_cuda_dlls
+        ensure_cuda_dlls()
+    except Exception:
+        pass
     mgr = ConfigManager(user_path=user_config, overrides=overrides)
     logging.basicConfig(level=getattr(logging, str(mgr.get("logging.level", "INFO")).upper(),
                                       logging.INFO))
     pipeline = VoicePipeline(mgr.config)
     store = SettingsStore(mgr, pipeline)
     return pipeline, mgr.config, store
+
+
+def _start_push_to_talk(config: dict, pipeline) -> object | None:
+    """Register the global push-to-talk hotkey. Returns the listener.
+
+    Clicking a button would steal keyboard focus, so recording is triggered
+    system-wide while the cursor stays wherever the user left it.
+    """
+    import logging as _logging
+    import threading as _hotkey_threads
+
+    from voicetype.hotkeys import HotkeyListener
+
+    _hk_log = _logging.getLogger("voicetype.hotkeys")
+
+    def _push_to_talk() -> None:
+        _hk_log.info("push-to-talk hotkey pressed; starting manual dictation")
+        _hotkey_threads.Thread(target=pipeline.dictate_once,
+                               name="vt-ptt", daemon=True).start()
+
+    listener = HotkeyListener(
+        (config.get("hotkeys", {}) or {}).get("push_to_talk", "ctrl+alt+space"),
+        _push_to_talk)
+    listener.start()
+    return listener
 
 
 def main(argv=None) -> int:
@@ -41,6 +71,10 @@ def main(argv=None) -> int:
         import yaml
         print(yaml.safe_dump(config, sort_keys=False))
         return 0
+    try:
+        _start_push_to_talk(config, pipeline)
+    except Exception as exc:
+        print(f"hotkeys unavailable: {exc}")
     companion_handles = None
     if args.show_qr or args.companion or config.get("companion", {}).get("enabled"):
         from voicetype.companion.server import start_companion_services

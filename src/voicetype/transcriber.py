@@ -53,6 +53,11 @@ class Transcriber:
         with self._lock:
             if self._model is not None:
                 return self._model
+            try:
+                from voicetype._dll_setup import ensure_cuda_dlls
+                ensure_cuda_dlls()
+            except Exception:
+                pass
             from faster_whisper import WhisperModel  # type: ignore
             self._model = WhisperModel(
                 self.model_name, device=self.device, compute_type=self.compute_type
@@ -136,8 +141,20 @@ class Transcriber:
         text = " ".join(t.strip() for t in texts if t and t.strip())
         text = " ".join(text.split())
         lang = getattr(info, "language", self.language) if info is not None else self.language
-        self.last_info = {"language": lang, "n_segments": len(texts)}
+        self.last_info = {"language": lang, "n_segments": len(texts),
+                            "n_raw_segments": len(segments),
+                            "confidence": self._mean_confidence(kept)}
         return {"text": text, "segments": texts, "language": lang, "backend": self.backend}
+
+    @staticmethod
+    def _mean_confidence(segments) -> float:
+        scores = []
+        for s in segments:
+            try:
+                scores.append(float(getattr(s, "avg_logprob", 0.0) or 0.0))
+            except (TypeError, ValueError):
+                continue
+        return sum(scores) / len(scores) if scores else 0.0
 
     def set_vocabulary(self, words: list[str]) -> None:
         words = [w for w in (words or []) if w]

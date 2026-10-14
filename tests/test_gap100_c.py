@@ -402,3 +402,62 @@ def test_settings_outer_except(tmp_path):
     store = SettingsStore(mgr, pipeline=types.SimpleNamespace())
     store.apply_live("injection.auto_punctuation", True)  # no .config: swallowed
     store.set("injection.auto_punctuation", True, save=False)
+
+
+def test_transcriber_failure_surfaces_as_error():
+    import numpy as np
+    from voicetype.config_manager import load_config
+    from voicetype.injector import FallbackInjector
+    from voicetype.pipeline import VoicePipeline
+    from tests.test_pipeline import FakeContext, FakeParser
+
+    class BrokenSTT:
+        backend = "broken"
+
+        def transcribe(self, audio, sample_rate=16000):
+            raise OSError("c10_cuda.dll missing")
+
+        def set_vocabulary(self, words):
+            pass
+
+    cfg = load_config(overrides={"injection": {"backend": "fallback"}})
+    pipe = VoicePipeline(cfg, injector=FallbackInjector(),
+                         transcriber=BrokenSTT(),
+                         parser=FakeParser({"kind": "dictation", "text": "x"}),
+                         context=FakeContext())
+    events: list = []
+    pipe.add_event_listener(lambda e, p: events.append(e))
+    loud = (np.random.RandomState(9).randn(16000).astype(np.float32) * 0.3)
+    out = pipe.handle_audio(loud)
+    assert out["kind"] == "error" and "c10_cuda" in out["error"]
+    assert pipe.injector.typed_log == []
+    assert "error" in events
+
+
+def test_ui_shows_error_event(tmp_path, qapp):
+    from voicetype.config_manager import ConfigManager
+    from voicetype.settings_store import SettingsStore
+    from voicetype.ui_main import MainWindow
+    from tests.test_pipeline import _silent_pipeline
+    pipe, _ = _silent_pipeline("hi", {"kind": "dictation", "text": "hi"})
+    store = SettingsStore(ConfigManager(user_path=tmp_path / "c.yaml"), pipe)
+    win = MainWindow(store, pipe)
+    win._on_event("error", {"text": "Transcription failed: boom"})
+    assert "boom" in win.last_label.text()
+    assert win.log_table.rowCount() == 1
+    win.close()
+
+
+def test_cuda_dll_bootstrap_registers_nvidia_bins(tmp_path, monkeypatch):
+    import os
+    import site as _site
+    from voicetype import _dll_setup as dll
+    bindir = tmp_path / "sp" / "nvidia" / "cublas" / "bin"
+    bindir.mkdir(parents=True)
+    monkeypatch.setattr(_site, "getsitepackages", lambda: [str(tmp_path / "sp")])
+    monkeypatch.setattr(_site, "getusersitepackages",
+                        lambda: (_ for _ in ()).throw(RuntimeError("no user site")))
+    registered = dll.ensure_cuda_dlls()
+    assert str(bindir) in registered  # plus any real nvidia dirs on sys.path
+    assert str(bindir) in os.environ.get("PATH", "")
+    assert str(bindir) in dll.nvidia_bin_dirs()

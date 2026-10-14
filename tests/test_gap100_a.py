@@ -74,6 +74,19 @@ def test_capture_preset_and_unshaped_names(monkeypatch):
     monkeypatch.setitem(sys.modules, "sounddevice", fake2)
     cap3 = AudioCapture(AudioRingBuffer(seconds=1.0))
     assert cap3.resolve_device_name() == "(system default input)"
+    assert cap3._query_native_rate() is None  # non-dict answer
+    fake3 = types.SimpleNamespace(
+        query_devices=lambda *a, **k: {"name": "X", "default_samplerate": "junk"})
+    monkeypatch.setitem(sys.modules, "sounddevice", fake3)
+    assert AudioCapture(AudioRingBuffer(seconds=1.0))._query_native_rate() is None
+    fake4 = types.SimpleNamespace(
+        query_devices=lambda *a, **k: {"name": "X", "default_samplerate": 0})
+    monkeypatch.setitem(sys.modules, "sounddevice", fake4)
+    assert AudioCapture(AudioRingBuffer(seconds=1.0))._query_native_rate() is None
+    fake5 = types.SimpleNamespace(
+        query_devices=lambda *a, **k: {"name": "X", "default_samplerate": 48000.0})
+    monkeypatch.setitem(sys.modules, "sounddevice", fake5)
+    assert AudioCapture(AudioRingBuffer(seconds=1.0))._query_native_rate() == 48000
 
 
 # ---------- discovery ----------

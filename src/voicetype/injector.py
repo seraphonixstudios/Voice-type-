@@ -26,6 +26,9 @@ class BaseInjector(abc.ABC):
         self.events_log: list[tuple] = []  # ("key",...)/("scroll",...)/...
         self._last_type_presses = 0  # key-event count of the most recent type_text
         self.last_error: str | None = None  # set when a backend call fails
+        # Last OS-level delivery report: (accepted, total) keystrokes, or None
+        # when the backend cannot report (most non-Windows paths).
+        self.last_delivery: tuple[int, int] | None = None
 
     @abc.abstractmethod
     def _type_ascii_chunk(self, chunk: str) -> None: ...  # pragma: no cover - abstract contract; concrete backends are covered
@@ -382,7 +385,8 @@ class SendInputInjector(BaseInjector):
                     ki = KEYBDINPUT(0, ord(ch), flags, 0, None)
                     events.append(INPUT(INPUT_KEYBOARD, ki, (ctypes.c_ubyte * 8)()))
             arr = (INPUT * len(events))(*events)
-            ctypes.windll.user32.SendInput(len(events), arr, ctypes.sizeof(INPUT))
+            accepted = ctypes.windll.user32.SendInput(len(events), arr, ctypes.sizeof(INPUT))
+            self.last_delivery = (int(accepted), len(events))
         except Exception as exc:
             self._note_error("sendinput.type", exc)
 
@@ -410,7 +414,8 @@ class SendInputInjector(BaseInjector):
             events = [INPUT(INPUT_KEYBOARD, KEYBDINPUT(vk, 0, fl, 0, None),
                             (ctypes.c_ubyte * 8)()) for vk, fl in seq]
             arr = (INPUT * len(events))(*events)
-            ctypes.windll.user32.SendInput(len(events), arr, ctypes.sizeof(INPUT))
+            accepted = ctypes.windll.user32.SendInput(len(events), arr, ctypes.sizeof(INPUT))
+            self.last_delivery = (int(accepted), len(events))
         except Exception as exc:
             self._note_error("sendinput.combo", exc)
 

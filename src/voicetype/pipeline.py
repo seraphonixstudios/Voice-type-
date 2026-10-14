@@ -1,6 +1,7 @@
 """End-to-end pipeline: wake -> record utterance -> transcribe -> parse -> act."""
 from __future__ import annotations
 
+import re
 import subprocess
 import threading
 import time
@@ -19,6 +20,29 @@ from voicetype.wake import WakeWordDetector
 class CommandExecutor:
     """Runs COMMAND actions via injector / OS."""
 
+    # Targets that must never reach a shell launcher: URLs (would open a
+    # browser to an arbitrary page), paths, and executables. Hallucinated
+    # transcripts have produced all three.
+    _UNSAFE_APP_TARGET = re.compile(
+        r"(?i)^\s*(https?://|ftp://|file://|www\.|\\\\|[a-z]:[\\/]|"
+        r".*\.(exe|bat|cmd|ps1|msi|lnk)\s*$)")
+
+    # Everyday names -> real launch targets, per OS where they differ.
+    _APP_ALIASES = {
+        "microsoft edge": {"Darwin": "Microsoft Edge", "Windows": "msedge", "Linux": "microsoft-edge"},
+        "edge": {"Darwin": "Microsoft Edge", "Windows": "msedge", "Linux": "microsoft-edge"},
+        "chrome": {"Darwin": "Google Chrome", "Windows": "chrome", "Linux": "google-chrome"},
+        "google chrome": {"Darwin": "Google Chrome", "Windows": "chrome", "Linux": "google-chrome"},
+        "firefox": {"Darwin": "Firefox", "Windows": "firefox", "Linux": "firefox"},
+        "vscode": {"Darwin": "Visual Studio Code", "Windows": "code", "Linux": "code"},
+        "visual studio code": {"Darwin": "Visual Studio Code", "Windows": "code", "Linux": "code"},
+        "notepad": {"Darwin": "TextEdit", "Windows": "notepad", "Linux": "gedit"},
+        "calculator": {"Darwin": "Calculator", "Windows": "calc", "Linux": "gnome-calculator"},
+        "terminal": {"Darwin": "Terminal", "Windows": "wt", "Linux": "gnome-terminal"},
+        "safari": {"Darwin": "Safari", "Windows": "msedge", "Linux": "firefox"},
+        "word": {"Darwin": "Microsoft Word", "Windows": "winword", "Linux": "libreoffice --writer"},
+    }
+
     def __init__(self, injector: BaseInjector, context: ContextLayer):
         self.injector = injector
         self.context = context
@@ -35,7 +59,10 @@ class CommandExecutor:
             elif action == "new_paragraph":
                 self.injector.new_paragraph()
             elif action == "switch_app" or action == "open_app":
-                self._switch_app(target or value)
+                if not self._switch_app(target or value):
+                    result["ok"] = False
+                    result["error"] = (
+                        f"refused unsafe app target {target or value!r}")
             elif action == "scroll":
                 try:
                     amt = int(value) if str(value).strip().isdigit() else 3
@@ -69,18 +96,35 @@ class CommandExecutor:
         import platform
         return platform.system() == "Darwin"
 
-    def _switch_app(self, name: str) -> None:
+    @classmethod
+    def resolve_app_name(cls, name: str) -> str:
         import platform
+        key = (name or "").strip().lower()
+        return cls._APP_ALIASES.get(key, {}).get(platform.system(), (name or "").strip())
+
+    @classmethod
+    def is_unsafe_target(cls, name: str) -> bool:
+        return bool(cls._UNSAFE_APP_TARGET.match(name or ""))
+
+    def _switch_app(self, name: str) -> bool:
+        """Launch/focus an app. Returns False when the target is refused."""
+        import platform
+        if self.is_unsafe_target(name):
+            return False
         s = platform.system()
+        target = self.resolve_app_name(name)
+        if not target:
+            return False
         try:
             if s == "Darwin":
-                subprocess.run(["open", "-a", name], check=False, timeout=5)
+                subprocess.run(["open", "-a", target], check=False, timeout=5)
             elif s == "Windows":
-                subprocess.run(["cmd", "/c", "start", "", name], check=False, timeout=5)
+                subprocess.run(["cmd", "/c", "start", "", target], check=False, timeout=5)
             else:
-                subprocess.run(["xdg-open", name], check=False, timeout=5)
+                subprocess.run(["xdg-open", target], check=False, timeout=5)
         except Exception:
             pass
+        return True
 
 
 class VoicePipeline:
@@ -244,6 +288,39 @@ class VoicePipeline:
             return np.zeros(0, dtype=np.float32)
         return np.concatenate(chunks)
 
+    @staticmethod
+    def spectral_diagnosis(audio: np.ndarray, sample_rate: int = 16000) -> str:
+        """One-line spectral fingerprint: hum vs hiss vs voice vs clipping."""
+        mono = np.asarray(audio, dtype=np.float32).reshape(-1)
+        if mono.size < 1600:
+            return "too short to analyze"
+        peak = float(np.max(np.abs(mono)))
+        if peak < 1e-4:
+            return "digital silence"
+        try:
+            spectrum = np.abs(np.fft.rfft(mono - np.mean(mono)))
+            freqs = np.fft.rfftfreq(mono.size, 1.0 / sample_rate)
+            total = float(np.sum(spectrum) + 1e-12)
+
+            def band(lo: float, hi: float) -> float:
+                sel = (freqs >= lo) & (freqs < hi)
+                return float(np.sum(spectrum[sel])) / total
+
+            hum, voice = band(45, 65), band(300, 3400)
+            hiss = band(6000, 8000)
+            clip = float(np.mean(np.abs(mono) > 0.98))
+            notes = []
+            if hum > 0.35:
+                notes.append(f"mains hum {hum:.0%}")
+            if hiss > 0.25:
+                notes.append(f"hiss/noise {hiss:.0%}")
+            if clip > 0.02:
+                notes.append(f"clipping {clip:.0%}")
+            notes.append(f"voice-band {voice:.0%}")
+            return "peak {:.2f}, {}".format(peak, ", ".join(notes))
+        except Exception:
+            return "analysis failed"
+
     def speech_fraction(self, audio: np.ndarray) -> float:
         """Fraction of 100 ms frames at/above the silence threshold."""
         mono = np.asarray(audio, dtype=np.float32).reshape(-1)
@@ -259,23 +336,45 @@ class VoicePipeline:
                 loud += 1
         return (loud / total) if total else 0.0
 
-    def _empty_result(self, text: str = "") -> dict:
+    def _empty_result(self, text: str = "", detail: str = "") -> dict:
         self.last_transcription = text
-        self._emit("transcribed", {"text": text})
-        self.last_result = {"kind": "empty", "text": ""}
+        self._emit("transcribed", {"text": text, "detail": detail})
+        self.last_result = {"kind": "empty", "text": "", "detail": detail}
         return self.last_result
 
     def _process_utterance(self, audio: np.ndarray) -> dict:
         self._emit("transcribing", {"samples": int(audio.size)})
         if self.speech_fraction(audio) < self.min_speech_fraction:
             return self._empty_result()
-        tx = self.transcriber.transcribe(audio)
+        try:
+            tx = self.transcriber.transcribe(audio)
+        except Exception as exc:
+            # Never die silently: surface engine failures in UI + logs so a
+            # broken model install looks broken instead of "nothing happens".
+            message = f"Transcription failed: {exc}"
+            self.last_transcription = ""
+            self.last_result = {"kind": "error", "text": "", "error": message}
+            self._emit("error", {"text": message})
+            return self.last_result
         text = (tx.get("text") or "").strip()
         self.last_transcription = text
         self._emit("transcribed", {"text": text})
         if not text:
-            return self._empty_result(text)
+            dur = audio.size / float(self.ring.sample_rate)
+            frac = self.speech_fraction(audio)
+            info = getattr(self.transcriber, "last_info", {}) or {}
+            detail = (f"no speech recognized from {dur:.1f}s audio "
+                      f"({frac:.0%} speech, "
+                      f"{info.get('n_raw_segments', '?')} raw / "
+                      f"{info.get('n_segments', '?')} kept segments; "
+                      f"{self.spectral_diagnosis(audio, self.ring.sample_rate)})")
+            return self._empty_result(text, detail)
         parsed = self.parser.classify(text)
+        if parsed.get("kind") == "command":
+            if self._is_risky_low_confidence_command(parsed):
+                # Uncertain app-launch: type the words instead of launching.
+                parsed = {"kind": "dictation", "text": text,
+                          "demoted": True, "raw": text}
         if parsed.get("kind") == "command":
             exec_res = self.executor.execute(parsed)
             self.last_result = {"kind": "command", "parsed": parsed, "exec": exec_res,
@@ -290,6 +389,13 @@ class VoicePipeline:
             # Universal integration layer: strategy per focused app/field,
             # primary -> clipboard -> warn fallback chain inside the router.
             result = self.router.inject_text(clean + " ", ctx=None)
+            delivery = getattr(self.injector, "last_delivery", None)
+            warning = result.warning
+            if delivery is not None and delivery[1] > 0 and delivery[0] == 0:
+                warning = ((warning + " ") if warning else "") + (
+                    "OS accepted 0 keystrokes — the target window likely has "
+                    "no text caret (click inside the text box), or it blocks "
+                    "synthetic input.")
             self.last_result = {"kind": "dictation", "text": clean,
                                 "context": self.context.current(),
                                 "strategy": {"mode": result.strategy.mode,
@@ -297,14 +403,62 @@ class VoicePipeline:
                                              "field_role": result.strategy.field_role,
                                              "fallback_used": result.strategy.fallback_used,
                                              "redacted": result.redacted},
-                                "warning": result.warning}
+                                "delivery": delivery,
+                                "warning": warning}
             self._emit("dictation", self.last_result)
         return self.last_result
 
+    def _is_risky_low_confidence_command(self, parsed: dict) -> bool:
+        """True for app-launch commands we should not trust.
+
+        Launching applications from a misheard transcript is the one
+        command class with side effects outside the text field, so it gets
+        two extra gates: an explicit confidence floor, and refusal of
+        URL/path/executable-looking targets (which would otherwise open a
+        browser to an arbitrary page or run a file).
+        """
+        action = (parsed.get("action") or "").lower()
+        if action not in ("switch_app", "open_app"):
+            return False
+        target = parsed.get("target") or parsed.get("value") or ""
+        if CommandExecutor.is_unsafe_target(target):
+            return True
+        try:
+            conf = float((getattr(self.transcriber, "last_info", {}) or {}).get(
+                "confidence", 0.0))
+        except (TypeError, ValueError):
+            conf = 0.0
+        floor = float((self.config.get("commands", {}) or {}).get(
+            "min_confidence", -0.5))
+        return conf < floor
+
     # Synchronous helper used by tests / push-to-talk.
-    def handle_audio(self, audio: np.ndarray) -> dict:
-        # Paused means paused: explicit push-to-talk must not bypass the
+    def handle_audio(self, audio: np.ndarray) -> dict:        # Paused means paused: explicit push-to-talk must not bypass the
         # listening switch, or a stuck hotkey keeps injecting forever.
         if not self.listening:
             return {"kind": "empty", "text": ""}
         return self._process_utterance(np.asarray(audio, dtype=np.float32).reshape(-1))
+
+    def dictate_once(self) -> dict:
+        """Manual trigger: record one utterance now, no wake word needed.
+
+        Deterministic fallback for environments where the energy detector
+        can't hear the phrase reliably. Honors pause/busy like _on_wake.
+        """
+        if not self.listening:
+            return {"kind": "empty", "text": ""}
+        with self._lock:
+            if self._recording:
+                return {"kind": "busy", "text": ""}
+            self._recording = True
+        try:
+            self._emit("wake", {"score": 1.0, "backend": "manual", "manual": True})
+            result = self._process_utterance(self.record_utterance())
+            import logging
+            logging.getLogger("voicetype.pipeline").info(
+                "manual dictation finished: kind=%s text=%r",
+                result.get("kind"), (result.get("text") or "")[:80])
+            return result
+        finally:
+            with self._lock:
+                self._recording = False

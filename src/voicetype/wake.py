@@ -6,6 +6,7 @@ otherwise an energy-based fallback detector so the pipeline stays functional
 """
 from __future__ import annotations
 
+import collections
 import threading
 import time
 from pathlib import Path
@@ -24,11 +25,12 @@ class WakeWordDetector:
         self.model_name = model_name
         self.model_path = model_path
         self.chunk_samples = int(chunk_samples)
-        # Energy fallback only: consecutive loud frames required before firing.
-        # A single clack/cough must never start a recording; ~0.5 s of
-        # sustained speech-like energy (≈6 x 80 ms frames) must.
+        # Energy fallback only: sustained loudness within a short window.
+        # A single clack/cough must never start a recording, but natural
+        # speech has quiet gaps between syllables, so we count loud frames
+        # in a sliding window instead of demanding an unbroken streak.
         self.trigger_frames = max(1, int(trigger_frames))
-        self._loud_streak = 0
+        self._window = collections.deque(maxlen=self.trigger_frames + 4)
         self._callbacks: list = []
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -89,16 +91,16 @@ class WakeWordDetector:
         else:
             score = self._fallback_score(frame)
         if score < self.threshold:
-            self._loud_streak = 0
+            self._window.append(False)
             return
         if from_model:
             # A real classifier verdict counts immediately.
             self._maybe_fire(score)
             return
         # Energy fallback: demand sustained loudness, not a single transient.
-        self._loud_streak += 1
-        if self._loud_streak >= self.trigger_frames:
-            self._loud_streak = 0
+        self._window.append(True)
+        if sum(self._window) >= self.trigger_frames:
+            self._window.clear()
             self._maybe_fire(score)
 
     def _maybe_fire(self, score: float) -> None:
@@ -109,14 +111,16 @@ class WakeWordDetector:
 
     @staticmethod
     def _fallback_score(frame: np.ndarray) -> float:
-        # Energy gate: sustained loud speech-ish frames score high.
-        # Quiet frames score ~0 so idle CPU stays low and false fires are rare.
+        # Energy gate tuned for real conversational speech (not test tones):
+        # room silence (~0.012 RMS) scores ~0, clear close-mic speech
+        # (~0.06+ RMS) crosses the default 0.5 threshold. Anything sustained
+        # and speech-loud fires; brief transients never reach trigger_frames.
         rms = float(np.sqrt(np.mean(frame.astype(np.float64) ** 2) + 1e-12))
-        if rms < 0.02:
+        if rms < 0.012:
             return 0.0
-        if rms > 0.4:
+        if rms > 0.10:
             return 0.9
-        return min(0.9, (rms - 0.02) / 0.38 * 0.9)
+        return min(0.9, (rms - 0.012) / 0.088 * 0.9)
 
     def _fire(self, score: float) -> None:
         with self._lock:

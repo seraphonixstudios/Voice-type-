@@ -22,8 +22,9 @@ wake_word:
   threshold: 0.5
   refractory_seconds: 2.0
   vad_threshold: 0.5
-  trigger_frames: 6     # energy fallback only: consecutive loud 80ms frames
-                        # before a wake fires (6 ~= 0.5s of sustained speech)
+  trigger_frames: 4     # energy fallback only: loud 80ms frames within a short
+                        # window before a wake fires (4 ~= a spoken phrase;
+                        # quiet gaps between syllables are tolerated)
 
 stt:
   model: "large-v3"
@@ -58,6 +59,13 @@ llm:
   temperature: 0.1
   num_predict: 256
   command_vocabulary: []  # extra command phrases that bias the heuristic fallback
+
+commands:
+  # Safety gates for commands with side effects outside the text field.
+  # switch_app/open_app below this mean segment logprob are demoted to
+  # dictation (typed, not launched); URL/path/executable targets are
+  # always refused.
+  min_confidence: -0.5
 
 injection:
   backend: "auto"       # auto | cg_event | sendinput | uinput | fallback

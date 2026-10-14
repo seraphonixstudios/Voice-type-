@@ -163,6 +163,73 @@ def test_speech_fraction_unit():
     assert pipe.speech_fraction(np.ones(SR, dtype=np.float32) * 0.5) == 1.0
 
 
+def test_pipeline_warns_on_zero_delivery():
+    from voicetype.config_manager import load_config
+    from voicetype.injector import FallbackInjector
+    from voicetype.pipeline import VoicePipeline
+    from tests.test_pipeline import FakeContext, FakeParser, FakeTranscriber
+    import numpy as np
+    cfg = load_config(overrides={"injection": {"backend": "fallback"}})
+    inj = FallbackInjector()
+    inj.last_delivery = (0, 10)  # OS accepted nothing
+    pipe = VoicePipeline(cfg, injector=inj,
+                         transcriber=FakeTranscriber("hello there"),
+                         parser=FakeParser({"kind": "dictation", "text": "hello there"}),
+                         context=FakeContext())
+    loud = (np.random.RandomState(12).randn(16000).astype(np.float32) * 0.3)
+    out = pipe.handle_audio(loud)
+    assert out["kind"] == "dictation"
+    assert "0 keystrokes" in out["warning"]
+
+
+def test_empty_dictation_carries_diagnostic_detail():
+    from voicetype.config_manager import load_config
+    from voicetype.injector import FallbackInjector
+    from voicetype.pipeline import VoicePipeline
+    from tests.test_pipeline import FakeContext, FakeParser, FakeTranscriber
+    import numpy as np
+    cfg = load_config(overrides={"injection": {"backend": "fallback"}})
+    pipe = VoicePipeline(cfg, injector=FallbackInjector(),
+                         transcriber=FakeTranscriber(""),
+                         parser=FakeParser({"kind": "dictation", "text": ""}),
+                         context=FakeContext())
+    loud = (np.random.RandomState(11).randn(16000).astype(np.float32) * 0.3)
+    out = pipe.handle_audio(loud)
+    assert out["kind"] == "empty" and out["text"] == ""
+    assert "speech" in out["detail"] and "segments" in out["detail"]
+
+
+def test_spectral_diagnosis_labels_audio():
+    import numpy as np
+    from voicetype.pipeline import VoicePipeline
+    assert VoicePipeline.spectral_diagnosis(
+        np.zeros(100, dtype=np.float32)) == "too short to analyze"
+    assert "digital silence" in VoicePipeline.spectral_diagnosis(
+        np.zeros(16000, dtype=np.float32))
+    t = np.arange(16000) / 16000.0
+    hum = (0.5 * np.sin(2 * np.pi * 50 * t)).astype(np.float32)
+    assert "mains hum" in VoicePipeline.spectral_diagnosis(hum)
+    voice = (0.3 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+    diag = VoicePipeline.spectral_diagnosis(voice)
+    assert "voice-band" in diag and "mains hum" not in diag
+
+
+def test_dictate_once_paths(speech_audio):
+    pipe, inj, _ = _pipe("manual words", {"kind": "dictation", "text": "manual words"})
+    pipe.set_listening(False)
+    out = pipe.dictate_once()
+    assert out["kind"] == "empty" and out["text"] == ""
+    assert inj.typed_log == []
+    pipe.set_listening(True)
+    pipe._recording = True
+    assert pipe.dictate_once() == {"kind": "busy", "text": ""}
+    pipe._recording = False
+    pipe.ring.write((speech_audio[:16000] * 2).astype(np.float32))
+    out = pipe.dictate_once()
+    assert out["kind"] == "dictation"
+    assert inj.typed_log == ["manual words "]
+
+
 def test_wake_triggers_record_and_process(wake_audio):
     pipe, inj, _ = _pipe("hello world", {"kind": "dictation", "text": "hello world"})
     # Pre-fill ring with speech-like audio so the utterance passes the gate.
@@ -183,6 +250,74 @@ def test_wake_ignored_when_paused_and_when_busy(wake_audio):
     pipe._on_wake({"score": 0.9})
     pipe._recording = False
     assert inj.typed_log == []
+
+
+def test_fallback_score_tuning():
+    from voicetype.wake import WakeWordDetector as W
+    import numpy as np
+    assert W._fallback_score(np.zeros(1280, dtype=np.float32)) == 0.0
+    assert W._fallback_score(np.ones(1280, dtype=np.float32) * 0.5) == 0.9
+    mid = W._fallback_score(np.ones(1280, dtype=np.float32) * 0.08)
+    assert 0.0 < mid < 0.9  # conversational level: counts toward a streak
+
+
+def test_capture_native_rate_resample(monkeypatch):
+    import sys
+    import types
+    import numpy as np
+    from voicetype.audio_ring import AudioRingBuffer
+    from voicetype.capture import AudioCapture
+    calls: list = []
+
+    class FakeStream:
+        def __init__(self, **kw):
+            calls.append(kw)
+            if kw.get("samplerate") == 16000:
+                raise RuntimeError("Invalid sample rate [PaErrorCode -9997]")
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+        def close(self):
+            pass
+
+    fake = types.SimpleNamespace(
+        InputStream=lambda **kw: FakeStream(**kw),
+        query_devices=lambda *a, **k: {"name": "Samson", "default_samplerate": 44100.0},
+    )
+    monkeypatch.setitem(sys.modules, "sounddevice", fake)
+    ring = AudioRingBuffer(seconds=2.0)
+    cap = AudioCapture(ring, device="Samson")
+    assert cap.start() == "sounddevice"
+    assert cap._capture_rate == 44100
+    assert calls[-1]["samplerate"] == 44100
+    cap._callback(np.ones((3528, 1), dtype=np.float32) * 0.2, 3528, None, None)
+    assert abs(len(ring) - 1280) <= 2  # 3528 @44.1k -> ~1280 @16k
+    assert cap.device_name == "Samson"
+    cap.stop()
+
+
+def test_capture_native_rate_same_retries_synthetic(monkeypatch):
+    import sys
+    import types
+    from voicetype.audio_ring import AudioRingBuffer
+    from voicetype.capture import AudioCapture
+
+    class FakeStream:
+        def __init__(self, **kw):
+            raise RuntimeError("nope")
+
+    fake = types.SimpleNamespace(
+        InputStream=lambda **kw: FakeStream(**kw),
+        query_devices=lambda *a, **k: {"name": "X", "default_samplerate": 16000.0},
+    )
+    monkeypatch.setitem(sys.modules, "sounddevice", fake)
+    cap = AudioCapture(AudioRingBuffer(seconds=1.0))
+    assert cap.start() == "synthetic"  # native == target: no resample path
+    cap.stop()
 
 
 def test_lifecycle_start_stop_with_synthetic_capture(monkeypatch):
@@ -324,3 +459,50 @@ def threading_feeder(pipe):
     time.sleep(0.45)
     stop.set()
     t.join(timeout=1.0)
+
+
+def test_low_confidence_app_launch_demoted_to_dictation():
+    import numpy as np
+    from voicetype.config_manager import load_config
+    from voicetype.injector import FallbackInjector
+    from voicetype.pipeline import VoicePipeline
+    from tests.test_pipeline import FakeContext, FakeParser
+    from tests.test_transcription import ScoredModel, ScoredSeg
+    from voicetype.transcriber import Transcriber
+    transcribed = ScoredModel([ScoredSeg("switch to edge", avg_logprob=-0.7)])
+    # -0.7 survives the segment filter (floor -1.0) but trips the
+    # app-launch confidence gate (floor -0.5) -> typed, not launched.
+    cfg = load_config(overrides={"injection": {"backend": "fallback"}})
+    pipe = VoicePipeline(cfg, injector=FallbackInjector(),
+                         transcriber=Transcriber(model_override=transcribed),
+                         parser=FakeParser({"kind": "command", "action": "switch_app",
+                                            "target": "edge", "value": ""}),
+                         context=FakeContext())
+    loud = (np.random.RandomState(13).randn(16000).astype(np.float32) * 0.3)
+    out = pipe.handle_audio(loud)
+    assert out["kind"] == "dictation"  # launched nothing, typed the words
+    assert pipe.injector.typed_log == ["switch to edge "]
+
+
+def test_unsafe_app_targets_refused():
+    from voicetype.injector import FallbackInjector
+    from voicetype.pipeline import CommandExecutor
+    from tests.test_pipeline import FakeContext
+    ex = CommandExecutor(FallbackInjector(), FakeContext())
+    for bad in ["https://evil.example/x", "www.evil.example",
+                "C:\\Windows\\System32\\cmd.exe", "\\\\srv\\share",
+                "payload.exe", "run.bat"]:
+        res = ex.execute({"action": "switch_app", "target": bad, "value": ""})
+        assert res["ok"] is False and "refused" in res["error"]
+    assert ex.history and all(h["action"] == "switch_app" for h in ex.history)
+
+
+def test_app_alias_resolution(monkeypatch):
+    import platform
+    from voicetype.pipeline import CommandExecutor
+    monkeypatch.setattr(platform, "system", lambda: "Windows")
+    assert CommandExecutor.resolve_app_name("Microsoft Edge") == "msedge"
+    assert CommandExecutor.resolve_app_name("  OBSIDIAN  ") == "OBSIDIAN"
+    assert CommandExecutor.resolve_app_name("") == ""
+    assert CommandExecutor.is_unsafe_target("https://x.example") is True
+    assert CommandExecutor.is_unsafe_target("Firefox") is False

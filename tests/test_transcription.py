@@ -151,7 +151,8 @@ def test_missing_faster_whisper_raises_helpfully(speech_audio, monkeypatch):
 def test_last_info_tracks_language_and_segments(speech_audio):
     tr = Transcriber(model_override=FakeWhisperModel(("a", "b"), language="en"))
     tr.transcribe(speech_audio)
-    assert tr.last_info == {"language": "en", "n_segments": 2}
+    assert tr.last_info == {"language": "en", "n_segments": 2, "n_raw_segments": 2,
+                             "confidence": 0.0}
 
 
 class ScoredSeg:
@@ -191,6 +192,16 @@ def test_all_filtered_yields_empty_text(speech_audio):
     tr = Transcriber(model_override=model)
     out = tr.transcribe(speech_audio)
     assert out["text"] == "" and out["segments"] == []
+
+
+def test_confidence_tracked_per_utterance(speech_audio):
+    tr = Transcriber(model_override=FakeWhisperModel(("hi",)))
+    tr.transcribe(speech_audio)
+    assert tr.last_info["confidence"] == 0.0  # FakeSeg carries no scores
+    tr2 = Transcriber(model_override=ScoredModel(
+        [ScoredSeg("a", avg_logprob=-0.2), ScoredSeg("b", avg_logprob=-0.6)]))
+    tr2.transcribe(speech_audio)
+    assert abs(tr2.last_info["confidence"] - (-0.4)) < 1e-9
 
 
 def test_confidence_thresholds_forwarded(speech_audio):
