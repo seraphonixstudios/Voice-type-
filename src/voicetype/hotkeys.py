@@ -101,6 +101,7 @@ class HotkeyListener:
                                          self._mods, self._vk):
                 log.warning("RegisterHotKey(%r) failed; hotkey inactive", self.spec)
                 return
+            log.info("hotkey registered: %r", self.spec)
             try:
                 msg = wintypes.MSG()
                 while not self._stop.is_set():

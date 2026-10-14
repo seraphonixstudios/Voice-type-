@@ -58,11 +58,13 @@ flowchart LR
 | Stage | Implementation | Key parameters |
 |---|---|---|
 | Capture | sounddevice, 16 kHz mono float32 | `audio.device` pinning, 80 ms chunks |
-| Wake | openWakeWord model, else energy fallback | `threshold`, `trigger_frames: 6` (~0.5 s sustained), `refractory_seconds` |
+| Wake | openWakeWord model, else energy fallback | `threshold`, `trigger_frames: 4` (loud frames in a short window; syllable gaps tolerated), `refractory_seconds` |
+| Trigger | wake word, global push-to-talk hotkey, or Dictate button | hotkey records without stealing focus; manual path shares the same gates |
+| Preview | display-only running transcript while recording | reuses the main model (no extra VRAM); never injected, never logged |
 | Utterance | ring pre-roll + record-until-silence | `end_silence_ms`, `max_seconds`, `min_speech_fraction: 0.15` |
 | STT | faster-whisper large-v3, GPU/CPU auto | VAD filter, batch windows of 16 s, `no_speech_threshold: 0.6`, `log_prob_threshold: -1.0` |
-| Parse | Dolphin Llama 3 via Ollama | `DICTATION:` vs `COMMAND: {action,target,value}`; heuristic fallback offline |
-| Act | integration router / command executor | per-category strategy, clipboard fallback chain |
+| Parse | Dolphin Llama 3 via Ollama | `DICTATION:` vs `COMMAND: {action,target,value}`; heuristic fallback offline; low-confidence app-launches demoted to dictation; URL/path targets refused |
+| Act | integration router / command executor | per-category strategy, clipboard fallback chain, SendInput delivery accounting |
 
 ## 5. Anti-phantom design
 

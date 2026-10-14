@@ -101,6 +101,26 @@ context via AT-SPI. If `/dev/uinput` is unavailable, fallback tools still type.
 Anything else is typed as dictation — with unicode (`café 中`), multiline,
 and code-indentation support.
 
+Trigger it hands-free with **"Hey VoiceType"**, instantly with the global
+**push-to-talk hotkey** (`Ctrl+Alt+Space`, cursor never leaves your app), or
+with the 🎤 Dictate button. While you speak, a display-only live preview
+runs in the Status page; only the finalized transcript is ever injected.
+
+## 🎮 GPU acceleration (NVIDIA)
+
+Whisper large-v3 flies on CUDA and crawls on CPU. If transcription is slow:
+
+```bash
+pip install nvidia-cuda-runtime-cu12 nvidia-cublas-cu12 nvidia-cudnn-cu12
+```
+
+The app registers these libraries itself at startup (no PATH surgery, no
+admin, no toolkit installer). Then set `stt.device: cuda` (check with
+`voicetype --check`). On cards with ≤8GB VRAM, keep
+`stt.compute_type: int8_float16` (quantized, negligible accuracy loss).
+No NVIDIA card? Use `stt.model: small` — ~1GB and several times faster
+than large-v3 on CPU.
+
 ## 🔌 Universal integration — every app, no plugins
 
 VoiceType injects through the OS input layer, so any app that takes keyboard
@@ -126,6 +146,10 @@ mDNS discovery, no cloud. [`mobile/`](mobile/) (Flutter) + `voicetype
   you, run `voicetype --list-mics` and pin `audio.device` (tray meter shows
   the live input).
 - iOS companion must stay foregrounded while dictating (platform limit).
+- **App-launch commands are gated**: `switch_app`/`open_app` below the
+  transcription-confidence floor are typed as words instead of launched,
+  and URL/path/executable targets are always refused — a misheard
+  transcript can never open a browser page or run a file.
 
 ## 🧪 Tests
 
