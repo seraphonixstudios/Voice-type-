@@ -36,6 +36,43 @@ def _block_live_os_input(monkeypatch):
     monkeypatch.setitem(sys.modules, "pynput.mouse", None)
 
 
+_LAUNCH_BLOCKLIST = ("ms-settings:", "x-apple.systempreferences", "xdg-open",
+                     "pkexec", "udev/rules.d")
+
+
+@pytest.fixture(autouse=True)
+def _block_os_side_effects(monkeypatch):
+    """Safety net: tests must NEVER launch OS settings, apps, or helpers.
+
+    A past regression had a UI test invoking the real Windows microphone
+    fix, popping the Settings app on the dev machine on every suite run.
+    Tests that need those paths mock subprocess.run themselves (their patch
+    wins over this guard); anything else attempting a launch fails loudly.
+    """
+    import subprocess
+
+    def _is_launch(argv) -> bool:
+        try:
+            text = str(argv)
+        except Exception:
+            return False
+        if any(mark in text for mark in _LAUNCH_BLOCKLIST):
+            return True
+        return "'cmd'" in text and "'/c'" in text and "'start'" in text
+
+    real_run = subprocess.run
+
+    def _guarded(*args, **kwargs):
+        argv = args[0] if args else kwargs.get("args", "")
+        if _is_launch(argv):
+            raise AssertionError(
+                "test attempted a real OS launch "
+                f"({str(argv)[:120]!r}); mock subprocess.run instead")
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", _guarded)
+
+
 @pytest.fixture
 def sample_rate() -> int:
     return SR

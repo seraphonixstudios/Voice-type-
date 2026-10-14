@@ -306,8 +306,13 @@ def test_ui_export_failures_and_perm_fix(tmp_path, qapp, monkeypatch):
     win._export_logs()  # csv write fails -> warning
     assert len(msgs) >= 2
     other = next(k for k in win.perm_rows if k != "microphone")
-    win._perm_fix(other)  # real fix + info + recheck, safe on any OS
-    assert msgs
+    import subprocess as _sp
+    launched: list = []
+    monkeypatch.setattr(_sp, "run",
+                        lambda *a, **k: launched.append(a[0]) or
+                        types.SimpleNamespace(returncode=0))
+    win._perm_fix(other)  # fix attempted, but subprocess is faked: OS untouched
+    assert msgs and launched
     win.close()
 
 

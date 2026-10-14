@@ -85,11 +85,14 @@ but a wrong-device capture plus missing gates:
    (webcam + headset + USB mic) routinely listen on the wrong device; the
    app logs its active input at startup and the tray meter exposes it live.
 6. **Hermetic test harness**: the project's own suite once typed into the
-   developer's focused window — two tests drove a real `SendInputInjector`
-   without OS fakes. Backend tests now universally fake Quartz/SendInput/
-   evdev, a conftest fixture neuters `pynput` suite-wide, and a tripwire
-   test fails if interception is ever removed. Test doubles that can reach
-   the real world are treated as a safety defect, not a style issue.
+   developer's focused window (two tests drove a real `SendInputInjector`
+   without OS fakes) and, separately, popped the Windows microphone settings
+   on every run (a UI test invoking the real permissions fix). Backend tests
+   now universally fake Quartz/SendInput/evdev, a conftest fixture neuters
+   `pynput` suite-wide, a second guard fails any test attempting a real OS
+   settings/app/helper launch, and tripwire tests guard both. Test doubles
+   that can reach the real world are treated as a safety defect, not a
+   style issue.
 
 ## 6. Universal integration
 

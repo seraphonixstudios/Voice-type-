@@ -20,6 +20,11 @@ voice keyboard, and contributions that protect that ethos are welcome.
    Real `SendInput`/`CGEvent`/`uinput` calls in a test would type into the
    focused window of whoever runs the suite — `test_os_calls_intercepted_by_fakes`
    is the tripwire. This bit us once; never again.
+6. **Tests must never launch OS settings, apps, or helpers.** A conftest
+   guard fails any test whose `subprocess` call smells like a settings page,
+   app launch, or privilege helper — a UI test once opened the Windows
+   microphone settings on the dev machine on every run. Mock
+   `subprocess.run` and assert on the attempted command instead.
 
 ## Workflow
 
