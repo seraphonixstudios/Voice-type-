@@ -306,8 +306,12 @@ def test_ui_export_failures_and_perm_fix(tmp_path, qapp, monkeypatch):
     win._export_logs()  # csv write fails -> warning
     assert len(msgs) >= 2
     other = next(k for k in win.perm_rows if k != "microphone")
+    import shutil as _shutil
     import subprocess as _sp
     launched: list = []
+    # Force the pkexec branch so the fix always shells out, on every OS.
+    monkeypatch.setattr(_shutil, "which",
+                        lambda name: "/usr/bin/pkexec" if name == "pkexec" else None)
     monkeypatch.setattr(_sp, "run",
                         lambda *a, **k: launched.append(a[0]) or
                         types.SimpleNamespace(returncode=0))
