@@ -24,8 +24,6 @@ def test_app_show_qr_without_png(tmp_path, monkeypatch, capsys):
 
 
 def test_app_companion_no_tray_lifecycle(tmp_path, monkeypatch, capsys):
-    import threading
-    import time
     from voicetype import app as appmod
     started: list = []
     handles = {"payload": None, "qr_png": b"", "tls_error": "",
@@ -34,18 +32,10 @@ def test_app_companion_no_tray_lifecycle(tmp_path, monkeypatch, capsys):
                    serve_in_background=lambda: started.append(True))}
     monkeypatch.setattr("voicetype.companion.server.start_companion_services",
                         lambda *a, **k: handles)
-    real_sleep = time.sleep
-    main_thread = threading.current_thread()
-
-    def sleep_or_boom(s):
-        if threading.current_thread() is main_thread:
-            raise KeyboardInterrupt()
-        real_sleep(0.001)
-
-    monkeypatch.setattr(time, "sleep", sleep_or_boom)
+    monkeypatch.setattr(appmod, "_run_forever", lambda: started.append("loop"))
     assert appmod.main(["--config", str(tmp_path / "c.yaml"),
                         "--companion", "--no-tray"]) == 0
-    assert started == [True]
+    assert started == [True, "loop"]
 
 
 # ---------- audio_ring ----------

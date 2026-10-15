@@ -48,6 +48,13 @@ def _start_push_to_talk(config: dict, pipeline) -> object | None:
     return listener
 
 
+def _run_forever() -> None:
+    """Block forever; Ctrl+C raises KeyboardInterrupt in the caller."""
+    import time
+    while True:
+        time.sleep(1)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="voicetype", description="Voice-first keyboard replacement")
     ap.add_argument("--config", default=None, help="Path to user config YAML")
@@ -101,9 +108,7 @@ def main(argv=None) -> int:
         pipeline.start()
         print("VoiceType running headless. Press Ctrl+C to stop.")
         try:
-            import time
-            while True:
-                time.sleep(1)
+            _run_forever()
         except KeyboardInterrupt:
             pass
         finally:

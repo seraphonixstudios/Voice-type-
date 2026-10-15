@@ -33,7 +33,6 @@ def test_main_check_prints_config(tmp_path, capsys):
 
 
 def test_main_no_tray_runs_until_interrupt(tmp_path, monkeypatch, capsys):
-    import time
     from voicetype.app import main
     from voicetype import app as appmod
 
@@ -46,15 +45,30 @@ def test_main_no_tray_runs_until_interrupt(tmp_path, monkeypatch, capsys):
     def fake_stop(self):
         stopped.append(True)
 
-    def boom(secs):
+    def interrupted():
         raise KeyboardInterrupt
 
     monkeypatch.setattr(appmod.VoicePipeline, "start", fake_start)
     monkeypatch.setattr(appmod.VoicePipeline, "stop", fake_stop)
-    monkeypatch.setattr(time, "sleep", boom)
+    monkeypatch.setattr(appmod, "_run_forever", interrupted)
     assert main(["--config", str(tmp_path / "c.yaml"), "--no-tray"]) == 0
     assert started and stopped
     assert "headless" in capsys.readouterr().out
+
+
+def test_run_forever_sleeps_until_stopped(monkeypatch):
+    import time
+    from voicetype import app as appmod
+    calls: list = []
+
+    def sleep_once(secs):
+        calls.append(secs)
+        raise RuntimeError("stop now")
+
+    monkeypatch.setattr(time, "sleep", sleep_once)
+    with pytest.raises(RuntimeError, match="stop now"):
+        appmod._run_forever()
+    assert calls == [1]
 
 
 def test_main_tray_path_uses_tray_app(tmp_path, monkeypatch):
@@ -205,10 +219,6 @@ def test_push_to_talk_wiring_and_failure(tmp_path, monkeypatch, capsys):
 
     # Hotkey subsystem missing entirely: main() reports and continues.
     monkeypatch.setitem(sys.modules, "voicetype.hotkeys", None)
-    real_sleep = time.sleep
-    main_thread = threading.current_thread()
-    monkeypatch.setattr(time, "sleep", lambda s: (
-        (_ for _ in ()).throw(KeyboardInterrupt())
-        if threading.current_thread() is main_thread else real_sleep(0.001)))
+    monkeypatch.setattr(appmod, "_run_forever", lambda: None)
     assert appmod.main(["--config", str(tmp_path / "c.yaml"), "--no-tray"]) == 0
     assert "hotkeys unavailable" in capsys.readouterr().out
